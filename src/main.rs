@@ -1,4 +1,6 @@
 use std::io::{self, Write};
+use std::path::Path;
+use std::env;
 use std::process;
 
 fn main() {
@@ -43,11 +45,26 @@ fn main() {
             "type" => {
                 if parts.len() > 2 {
                     eprintln!("type only accepts 2 arguments");
+                    continue;
                 }
                 if valid_commands.iter().any(|s| s == &parts[1]) {
                     println!("{} is a shell builtin", parts[1]);
                 } else {
-                    println!("{}: not found", parts[1]);
+                    let path_var = env::var("PATH").unwrap();
+                    let paths = path_var.split(':');
+                    let mut command_exists = false;
+                    for path in paths {
+                        let file_path_str = format!("{}/{}", path, parts[1]);
+                        let file_path = Path::new(&file_path_str);
+                        if file_path.exists() {
+                            println!("{} is {}", parts[1], file_path_str);
+                            command_exists = true;
+                            break;
+                        }
+                    }
+                    if !command_exists {
+                        println!("{}: not found", parts[1]);
+                    }
                 }
             }
             _ => {
