@@ -19,6 +19,7 @@ fn main() {
             continue;
         }
 
+        let valid_commands = vec!["exit", "echo", "type"];
         match parts[0] {
             "exit" => {
                 let status_code = if parts.len() > 1 {
@@ -38,6 +39,16 @@ fn main() {
             "echo" => {
                 let output = parts[1..].join(" ");
                 println!("{}", output);
+            }
+            "type" => {
+                if parts.len() > 2 {
+                    eprintln!("type only accepts 2 arguments");
+                }
+                if valid_commands.iter().any(|s| s == &parts[1]) {
+                    println!("{} is a shell builtin", parts[1]);
+                } else {
+                    println!("{}: not found", parts[1]);
+                }
             }
             _ => {
                 println!("{}: command not found", command);
