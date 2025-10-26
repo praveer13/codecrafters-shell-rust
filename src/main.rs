@@ -62,7 +62,7 @@ fn main() {
             _ => {
                 let file_path_buf = find_executable(parts[0]);
                 if let Some(file_path) = file_path_buf {
-                    let mut child = process::Command::new(file_path)
+                    let mut child = process::Command::new(parts[0])
                         .args(&parts[1..])
                         .spawn()
                         .expect("failed to execute command");
