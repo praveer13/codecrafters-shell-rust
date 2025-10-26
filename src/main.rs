@@ -61,15 +61,17 @@ fn main() {
             }
             _ => {
                 let file_path_buf = find_executable(parts[0]);
-                if let Some(file_path) = file_path_buf {
+                if let Some(_file_path) = file_path_buf {
                     let mut child = process::Command::new(parts[0])
                         .args(&parts[1..])
                         .spawn()
                         .expect("failed to execute command");
 
                     child.wait().expect("failed to wait on child");
+                } else {
+                    println!("{}: command not found", parts[0]);
                 }
-                println!("{}: command not found", parts[0]);
+                
             }
         }
     }
