@@ -1,6 +1,7 @@
-use std::io::{self, Write};
-use std::path::Path;
 use std::env;
+use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::process;
 
 fn main() {
@@ -56,10 +57,14 @@ fn main() {
                     for path in paths {
                         let file_path_str = format!("{}/{}", path, parts[1]);
                         let file_path = Path::new(&file_path_str);
-                        if file_path.exists() {
-                            println!("{} is {}", parts[1], file_path_str);
-                            command_exists = true;
-                            break;
+                        if let Ok(metadata) = file_path.metadata() {
+                            let permissions = metadata.permissions();
+                            let is_executable = permissions.mode() & 0o111 != 0;
+                            if metadata.is_file() && is_executable {
+                                println!("{} is {}", parts[1], file_path_str);
+                                command_exists = true;
+                                break;
+                            }
                         }
                     }
                     if !command_exists {
