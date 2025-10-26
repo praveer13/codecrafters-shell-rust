@@ -1,7 +1,7 @@
 use std::env;
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{PathBuf};
 use std::process;
 
 fn main() {
@@ -51,30 +51,43 @@ fn main() {
                 if valid_commands.iter().any(|s| s == &parts[1]) {
                     println!("{} is a shell builtin", parts[1]);
                 } else {
-                    let path_var = env::var("PATH").unwrap();
-                    let paths = path_var.split(':');
-                    let mut command_exists = false;
-                    for path in paths {
-                        let file_path_str = format!("{}/{}", path, parts[1]);
-                        let file_path = Path::new(&file_path_str);
-                        if let Ok(metadata) = file_path.metadata() {
-                            let permissions = metadata.permissions();
-                            let is_executable = permissions.mode() & 0o111 != 0;
-                            if metadata.is_file() && is_executable {
-                                println!("{} is {}", parts[1], file_path_str);
-                                command_exists = true;
-                                break;
-                            }
-                        }
-                    }
-                    if !command_exists {
+                    let file_path_buf = find_executable(parts[1]);
+                    if let Some(file_path) = file_path_buf {
+                        println!("{} is {}", parts[1], file_path.display());
+                    } else {
                         println!("{}: not found", parts[1]);
                     }
                 }
             }
             _ => {
+                let file_path_buf = find_executable(command);
+                if let Some(file_path) = file_path_buf {
+                    let mut child = process::Command::new(file_path)
+                        .args(&parts[1..])
+                        .spawn()
+                        .expect("failed to execute command");
+
+                    child.wait().expect("failed to wait on child");
+                }
                 println!("{}: command not found", command);
             }
         }
     }
+}
+
+fn find_executable(file_path_str: &str) -> Option<PathBuf> {
+    let path_var = env::var("PATH").unwrap();
+    let paths = path_var.split(':');
+    for path in paths {
+        let file_path_str = format!("{}/{}", path, file_path_str);
+        let file_path = PathBuf::from(file_path_str);
+        if let Ok(metadata) = file_path.metadata() {
+            let permissions = metadata.permissions();
+            let is_executable = permissions.mode() & 0o111 != 0;
+            if metadata.is_file() && is_executable {
+                return Some(file_path)
+            }
+        }
+    }
+    None
 }
