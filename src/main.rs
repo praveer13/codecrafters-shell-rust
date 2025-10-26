@@ -69,7 +69,7 @@ fn main() {
 
                     child.wait().expect("failed to wait on child");
                 }
-                println!("{}: command not found", command);
+                println!("{}: command not found", parts[0]);
             }
         }
     }
