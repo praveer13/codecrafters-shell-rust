@@ -68,7 +68,19 @@ fn main() {
             }
             "cd" => {
                 if parts.len() == 2 {
-                    if env::set_current_dir(parts[1]).is_err() {
+                    let mut new_dir = parts[1].to_string();
+                    if parts[1].starts_with("~") {
+                        let home_dir = env::var("HOME").unwrap();
+                        let path_children: Vec<&str> = parts[1].split("/").collect();
+                        if path_children.len() > 1 {
+                            let path_after_home = path_children[1..].join("/");
+                            new_dir = format!("{}/{}",&home_dir, &path_after_home);
+                        } else {
+                            new_dir = home_dir;
+                        }
+                        
+                    }
+                    if env::set_current_dir(new_dir).is_err() {
                         eprintln!("{}: No such file or directory", parts[1]);
                     }
                 } else {
