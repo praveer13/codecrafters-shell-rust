@@ -22,7 +22,7 @@ fn main() {
             continue;
         }
 
-        let valid_commands = vec!["exit", "echo", "type"];
+        let valid_commands = vec!["exit", "echo", "type", "pwd"];
         match parts[0] {
             "exit" => {
                 let status_code = if parts.len() > 1 {
@@ -57,6 +57,13 @@ fn main() {
                     } else {
                         println!("{}: not found", parts[1]);
                     }
+                }
+            }
+            "pwd" => {
+                if let Ok(current_dir) = env::current_dir() {
+                    println!("{}", current_dir.to_string_lossy());
+                } else {
+                    eprintln!("Can't find current directory");
                 }
             }
             _ => {
