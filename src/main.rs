@@ -68,7 +68,9 @@ fn main() {
             }
             "cd" => {
                 if parts.len() == 2 {
-                    assert!(env::set_current_dir(parts[1]).is_ok());
+                    if env::set_current_dir(parts[1]).is_err() {
+                        eprintln!("{}: No such file or directory", parts[1]);
+                    }
                 } else {
                     eprintln!("cd only accepts 1 argument");
                 }
