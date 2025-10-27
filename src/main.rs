@@ -22,7 +22,7 @@ fn main() {
             continue;
         }
 
-        let valid_commands = vec!["exit", "echo", "type", "pwd"];
+        let valid_commands = vec!["exit", "echo", "type", "pwd", "cd"];
         match parts[0] {
             "exit" => {
                 let status_code = if parts.len() > 1 {
@@ -65,6 +65,14 @@ fn main() {
                 } else {
                     eprintln!("Can't find current directory");
                 }
+            }
+            "cd" => {
+                if parts.len() == 2 {
+                    assert!(env::set_current_dir(parts[1]).is_ok());
+                } else {
+                    eprintln!("cd only accepts 1 argument");
+                }
+                
             }
             _ => {
                 let file_path_buf = find_executable(parts[0]);
