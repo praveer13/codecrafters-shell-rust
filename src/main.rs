@@ -8,14 +8,23 @@ fn tokenize(input: &str) -> Vec<String> {
     let mut current_token: String = String::new();
     let mut tokens: Vec<String> = Vec::new();
     let mut input_chars = input.chars();
-    let mut is_in_quotes = false;
+    let mut is_in_single_quotes = false;
+    let mut is_in_double_quotes = false;
     while let Some(ch) = input_chars.next() {
         match ch {
+            '\"' => {
+                is_in_double_quotes = !is_in_double_quotes;
+            }
             '\'' => {
-                is_in_quotes = !is_in_quotes;
+                if is_in_double_quotes {
+                    current_token.push(ch);
+                } else {
+                    is_in_single_quotes = !is_in_single_quotes;
+                }
+                
             }
             ' ' | '\t' | '\n' => {
-                if is_in_quotes {
+                if is_in_single_quotes || is_in_double_quotes {
                     current_token.push(ch);
                 } else if !current_token.is_empty() {
                     tokens.push(current_token.clone());
