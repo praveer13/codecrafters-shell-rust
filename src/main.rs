@@ -4,6 +4,35 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{PathBuf};
 use std::process;
 
+fn tokenize(input: &str) -> Vec<String> {
+    let mut current_token: String = String::new();
+    let mut tokens: Vec<String> = Vec::new();
+    let mut input_chars = input.chars();
+    let mut is_in_quotes = false;
+    while let Some(ch) = input_chars.next() {
+        match ch {
+            '\'' => {
+                is_in_quotes = !is_in_quotes;
+            }
+            ' ' | '\t' | '\n' => {
+                if is_in_quotes {
+                    current_token.push(ch);
+                } else if !current_token.is_empty() {
+                    tokens.push(current_token.clone());
+                    current_token.clear();
+                }
+            } 
+            _ => {
+                current_token.push(ch);
+            }
+        }
+    }
+    if !current_token.is_empty() {
+        tokens.push(current_token.clone());
+    }
+    return tokens;
+}
+
 fn main() {
     loop {
         print!("$ ");
@@ -16,14 +45,14 @@ fn main() {
         }
 
         let command = command.trim();
-        let parts: Vec<&str> = command.split_whitespace().collect();
+        let parts = tokenize(command);
 
         if parts.is_empty() {
             continue;
         }
 
         let valid_commands = vec!["exit", "echo", "type", "pwd", "cd"];
-        match parts[0] {
+        match parts[0].as_str() {
             "exit" => {
                 let status_code = if parts.len() > 1 {
                     match parts[1].parse::<i32>() {
@@ -51,7 +80,7 @@ fn main() {
                 if valid_commands.iter().any(|s| s == &parts[1]) {
                     println!("{} is a shell builtin", parts[1]);
                 } else {
-                    let file_path_buf = find_executable(parts[1]);
+                    let file_path_buf = find_executable(&parts[1]);
                     if let Some(file_path) = file_path_buf {
                         println!("{} is {}", parts[1], file_path.display());
                     } else {
@@ -89,9 +118,9 @@ fn main() {
                 
             }
             _ => {
-                let file_path_buf = find_executable(parts[0]);
+                let file_path_buf = find_executable(&parts[0]);
                 if let Some(_file_path) = file_path_buf {
-                    let mut child = process::Command::new(parts[0])
+                    let mut child = process::Command::new(&parts[0])
                         .args(&parts[1..])
                         .spawn()
                         .expect("failed to execute command");
