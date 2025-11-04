@@ -5,15 +5,41 @@ use std::path::{PathBuf};
 use std::process;
 
 fn tokenize(input: &str) -> Vec<String> {
-    let mut current_token: String = String::new();
+    let mut current_token = String::new();
     let mut tokens: Vec<String> = Vec::new();
-    let mut input_chars = input.chars();
+    let mut input_chars = input.chars().peekable();
     let mut is_in_single_quotes = false;
     let mut is_in_double_quotes = false;
     while let Some(ch) = input_chars.next() {
         match ch {
-            '\"' => {
-                is_in_double_quotes = !is_in_double_quotes;
+            '\\' if !is_in_single_quotes => {
+                if let Some(&next_char) = input_chars.peek() {
+                    if is_in_double_quotes {
+                        match next_char {
+                            '"' | '$' | '\\' | '`' | '\n' => {
+                                current_token.push(next_char);
+                                input_chars.next();
+                            }
+                            _ => {
+                                current_token.push('\\');
+                                current_token.push(next_char);
+                                input_chars.next();
+                            }
+                        }
+                    } else {
+                        current_token.push(next_char);
+                        input_chars.next();
+                    }
+                } else {
+                    current_token.push('\\');
+                }
+            }
+            '"' => {
+                if is_in_single_quotes {
+                    current_token.push(ch);
+                } else {
+                    is_in_double_quotes = !is_in_double_quotes;
+                }
             }
             '\'' => {
                 if is_in_double_quotes {
@@ -21,25 +47,24 @@ fn tokenize(input: &str) -> Vec<String> {
                 } else {
                     is_in_single_quotes = !is_in_single_quotes;
                 }
-                
             }
-            ' ' | '\t' | '\n' => {
+            ch if ch.is_whitespace() => {
                 if is_in_single_quotes || is_in_double_quotes {
                     current_token.push(ch);
                 } else if !current_token.is_empty() {
                     tokens.push(current_token.clone());
                     current_token.clear();
                 }
-            } 
+            }
             _ => {
                 current_token.push(ch);
             }
         }
     }
     if !current_token.is_empty() {
-        tokens.push(current_token.clone());
+        tokens.push(current_token);
     }
-    return tokens;
+    tokens
 }
 
 fn main() {
