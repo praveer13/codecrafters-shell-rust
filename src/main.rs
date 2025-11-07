@@ -116,6 +116,7 @@ fn get_write_output(redirect_filename: &str) -> io::Result<File> {
 
 enum OutputSink<'a> {
     Stdout(io::StdoutLock<'a>),
+    Stderr(io::StderrLock<'a>),
     File(File),
 }
 
@@ -123,6 +124,7 @@ impl<'a> Write for OutputSink<'a> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             OutputSink::Stdout(handle) => handle.write(buf),
+            OutputSink::Stderr(handle) => handle.write(buf),
             OutputSink::File(file) => file.write(buf),
         }
     }
@@ -130,6 +132,7 @@ impl<'a> Write for OutputSink<'a> {
     fn flush(&mut self) -> io::Result<()> {
         match self {
             OutputSink::Stdout(handle) => handle.flush(),
+            OutputSink::Stderr(handle) => handle.flush(),
             OutputSink::File(file) => file.flush(),
         }
     }
@@ -141,7 +144,8 @@ enum BuiltinFlow {
     Exit(i32),
 }
 
-type BuiltinFn = fn(&mut Shell, &[String], &mut dyn Write) -> io::Result<BuiltinFlow>;
+type BuiltinFn =
+    fn(&mut Shell, &[String], &mut dyn Write, &mut dyn Write) -> io::Result<BuiltinFlow>;
 
 struct Shell {
     builtins: std::collections::HashMap<&'static str, BuiltinFn>,
@@ -188,29 +192,46 @@ impl Shell {
                 continue;
             }
 
-            let mut redirect_file = match redirect {
+            let (mut stdout_redirect_file, mut stderr_redirect_file) = match redirect {
                 Some(spec) => {
-                    if spec.fd != 1 {
-                        eprintln!("redirect for fd {} is not supported", spec.fd);
-                        continue;
-                    }
-                    match get_write_output(&spec.target) {
-                        Ok(file) => Some(file),
-                        Err(err) => {
-                            eprintln!("failed to open {}: {}", spec.target, err);
+                    match spec.fd {
+                        1 => match get_write_output(&spec.target) {
+                            Ok(file) => (Some(file), None),
+                            Err(err) => {
+                                eprintln!("failed to open {}: {}", spec.target, err);
+                                continue;
+                            }
+                        },
+                        2 => match get_write_output(&spec.target) {
+                            Ok(file) => (None, Some(file)),
+                            Err(err) => {
+                                eprintln!("failed to open {}: {}", spec.target, err);
+                                continue;
+                            }
+                        },
+                        _ => {
+                            eprintln!("redirect for fd {} is not supported", spec.fd);
                             continue;
                         }
                     }
                 }
-                None => None,
+                None => (None, None),
             };
 
             let command_name = parts[0].as_str();
 
             if let Some(builtin) = self.builtins.get(command_name) {
                 let stdout = io::stdout();
-                let mut writer = self.prepare_builtin_output(&stdout, redirect_file.as_ref())?;
-                let flow = builtin(self, &parts, &mut writer)?;
+                let stderr = io::stderr();
+                let mut stdout_writer = self.prepare_builtin_output(
+                    stdout_redirect_file.as_ref(),
+                    || OutputSink::Stdout(stdout.lock()),
+                )?;
+                let mut stderr_writer = self.prepare_builtin_output(
+                    stderr_redirect_file.as_ref(),
+                    || OutputSink::Stderr(stderr.lock()),
+                )?;
+                let flow = builtin(self, &parts, &mut stdout_writer, &mut stderr_writer)?;
                 if let BuiltinFlow::Exit(code) = flow {
                     process::exit(code);
                 }
@@ -218,27 +239,37 @@ impl Shell {
             }
 
             if find_executable(command_name).is_none() {
-                let stdout = io::stdout();
-                let mut writer = self.prepare_builtin_output(&stdout, redirect_file.as_ref())?;
+                let stderr = io::stderr();
+                let mut writer = self.prepare_builtin_output(
+                    stderr_redirect_file.as_ref(),
+                    || OutputSink::Stderr(stderr.lock()),
+                )?;
                 self.write_line(&mut writer, &format!("{}: command not found", command_name))?;
                 continue;
             }
 
-            if let Err(err) = self.run_external(&parts, redirect_file.take()) {
+            if let Err(err) = self.run_external(
+                &parts,
+                stdout_redirect_file.take(),
+                stderr_redirect_file.take(),
+            ) {
                 eprintln!("{}", err);
             }
         }
     }
 
-    fn prepare_builtin_output<'a>(
+    fn prepare_builtin_output<'a, F>(
         &self,
-        stdout: &'a io::Stdout,
         redirect: Option<&File>,
-    ) -> io::Result<OutputSink<'a>> {
+        fallback: F,
+    ) -> io::Result<OutputSink<'a>>
+    where
+        F: FnOnce() -> OutputSink<'a>,
+    {
         if let Some(file) = redirect {
             Ok(OutputSink::File(file.try_clone()?))
         } else {
-            Ok(OutputSink::Stdout(stdout.lock()))
+            Ok(fallback())
         }
     }
 
@@ -250,14 +281,15 @@ impl Shell {
     fn builtin_exit(
         &mut self,
         parts: &[String],
-        writer: &mut dyn Write,
+        _stdout_writer: &mut dyn Write,
+        stderr_writer: &mut dyn Write,
     ) -> io::Result<BuiltinFlow> {
         let status_code = if parts.len() > 1 {
             match parts[1].parse::<i32>() {
                 Ok(code) => code,
                 Err(_) => {
                     self.write_line(
-                        writer,
+                        stderr_writer,
                         &format!("exit: {}: numeric argument required", parts[1]),
                     )?;
                     return Ok(BuiltinFlow::Continue);
@@ -273,33 +305,35 @@ impl Shell {
     fn builtin_echo(
         &mut self,
         parts: &[String],
-        writer: &mut dyn Write,
+        stdout_writer: &mut dyn Write,
+        _stderr_writer: &mut dyn Write,
     ) -> io::Result<BuiltinFlow> {
         let message = parts[1..].join(" ");
-        self.write_line(writer, &message)?;
+        self.write_line(stdout_writer, &message)?;
         Ok(BuiltinFlow::Continue)
     }
 
     fn builtin_type(
         &mut self,
         parts: &[String],
-        writer: &mut dyn Write,
+        stdout_writer: &mut dyn Write,
+        stderr_writer: &mut dyn Write,
     ) -> io::Result<BuiltinFlow> {
         if parts.len() != 2 {
-            self.write_line(writer, "type only accepts 2 arguments")?;
+            self.write_line(stderr_writer, "type only accepts 2 arguments")?;
             return Ok(BuiltinFlow::Continue);
         }
 
         let target = &parts[1];
         if self.builtins.contains_key(target.as_str()) {
-            self.write_line(writer, &format!("{} is a shell builtin", target))?;
+            self.write_line(stdout_writer, &format!("{} is a shell builtin", target))?;
             return Ok(BuiltinFlow::Continue);
         }
 
         if let Some(path) = find_executable(target) {
-            self.write_line(writer, &format!("{} is {}", target, path.display()))?;
+            self.write_line(stdout_writer, &format!("{} is {}", target, path.display()))?;
         } else {
-            self.write_line(writer, &format!("{}: not found", target))?;
+            self.write_line(stderr_writer, &format!("{}: not found", target))?;
         }
 
         Ok(BuiltinFlow::Continue)
@@ -308,14 +342,15 @@ impl Shell {
     fn builtin_pwd(
         &mut self,
         _parts: &[String],
-        writer: &mut dyn Write,
+        stdout_writer: &mut dyn Write,
+        stderr_writer: &mut dyn Write,
     ) -> io::Result<BuiltinFlow> {
         match env::current_dir() {
             Ok(path) => {
-                self.write_line(writer, &path.to_string_lossy())?;
+                self.write_line(stdout_writer, &path.to_string_lossy())?;
             }
             Err(_) => {
-                self.write_line(writer, "Can't find current directory")?;
+                self.write_line(stderr_writer, "Can't find current directory")?;
             }
         }
 
@@ -325,10 +360,11 @@ impl Shell {
     fn builtin_cd(
         &mut self,
         parts: &[String],
-        writer: &mut dyn Write,
+        _stdout_writer: &mut dyn Write,
+        stderr_writer: &mut dyn Write,
     ) -> io::Result<BuiltinFlow> {
         if parts.len() != 2 {
-            self.write_line(writer, "cd only accepts 1 argument")?;
+            self.write_line(stderr_writer, "cd only accepts 1 argument")?;
             return Ok(BuiltinFlow::Continue);
         }
 
@@ -345,7 +381,7 @@ impl Shell {
         }
 
         if env::set_current_dir(&new_dir).is_err() {
-            self.write_line(writer, &format!("{}: No such file or directory", parts[1]))?;
+            self.write_line(stderr_writer, &format!("{}: No such file or directory", parts[1]))?;
         }
 
         Ok(BuiltinFlow::Continue)
@@ -354,13 +390,17 @@ impl Shell {
     fn run_external(
         &self,
         parts: &[String],
-        redirect_file: Option<File>,
+        stdout_redirect_file: Option<File>,
+        stderr_redirect_file: Option<File>,
     ) -> io::Result<()> {
         let mut command = process::Command::new(&parts[0]);
         command.args(&parts[1..]);
 
-        if let Some(file) = redirect_file {
+        if let Some(file) = stdout_redirect_file {
             command.stdout(Stdio::from(file));
+        }
+        if let Some(file) = stderr_redirect_file {
+            command.stderr(Stdio::from(file));
         }
 
         let mut child = command.spawn()?;
