@@ -6,9 +6,16 @@ use std::path::{PathBuf};
 use std::process::{self, Stdio};
 
 #[derive(Debug, Clone)]
+enum RedirectType {
+    CREATE,
+    APPEND
+}
+
+#[derive(Debug, Clone)]
 struct Redirect {
-    fd: i32,
+    fd: u32,
     target: String,
+    redirect_type: RedirectType
 }
 
 fn tokenize(input: &str) -> Result<(Vec<String>, Option<Redirect>), String> {
@@ -73,29 +80,38 @@ fn tokenize(input: &str) -> Result<(Vec<String>, Option<Redirect>), String> {
     }
     let redirect = if tokens.len() >= 2 {
         let op_token = tokens[tokens.len() - 2].as_str();
-        let fd = if op_token == ">" {
-            Some(1)
-        } else if op_token.ends_with('>') {
-            let fd_str = &op_token[..op_token.len() - 1];
-            if fd_str.is_empty() {
-                Some(1)
-            } else {
-                Some(
-                    fd_str
-                        .parse::<i32>()
-                        .map_err(|_| format!("invalid file descriptor: {}", fd_str))?,
-                )
-            }
-        } else {
-            None
+        let split_idx = op_token
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(op_token.len());
+        let (fd_part, op_part) = op_token.split_at(split_idx);
+
+        let redirect_type_optional = match op_part {
+            ">>" => Some(RedirectType::APPEND),
+            ">" => Some(RedirectType::CREATE),
+            _ => None,
         };
 
-        if let Some(fd) = fd {
+        let fd_optional = match redirect_type_optional {
+            Some(_) => {
+                if fd_part.is_empty() {
+                    Some(1)
+                } else {
+                    Some(
+                        fd_part
+                            .parse::<u32>()
+                            .map_err(|_| format!("invalid file descriptor: {}", fd_part))?,
+                    )
+                }
+            }
+            None => None,
+        };
+
+        if let (Some(fd), Some(redirect_type)) = (fd_optional, redirect_type_optional) {
             let filename = tokens
                 .pop()
                 .ok_or_else(|| "missing file name for redirect".to_string())?;
             tokens.pop();
-            Some(Redirect { fd, target: filename })
+            Some(Redirect { fd, target: filename, redirect_type })
         } else {
             None
         }
@@ -106,12 +122,24 @@ fn tokenize(input: &str) -> Result<(Vec<String>, Option<Redirect>), String> {
     Ok((tokens, redirect))
 }
 
-fn get_write_output(redirect_filename: &str) -> io::Result<File> {
-    OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(redirect_filename)
+fn get_write_output(redirect_filename: &str, redirect_type: RedirectType) -> io::Result<File> {
+    match redirect_type {
+        RedirectType::APPEND => {
+            OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open(redirect_filename)
+        },
+        RedirectType::CREATE => {
+            OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(redirect_filename)
+        }
+    }
+    
 }
 
 enum OutputSink<'a> {
@@ -195,14 +223,14 @@ impl Shell {
             let (mut stdout_redirect_file, mut stderr_redirect_file) = match redirect {
                 Some(spec) => {
                     match spec.fd {
-                        1 => match get_write_output(&spec.target) {
+                        1 => match get_write_output(&spec.target, spec.redirect_type) {
                             Ok(file) => (Some(file), None),
                             Err(err) => {
                                 eprintln!("failed to open {}: {}", spec.target, err);
                                 continue;
                             }
                         },
-                        2 => match get_write_output(&spec.target) {
+                        2 => match get_write_output(&spec.target, spec.redirect_type) {
                             Ok(file) => (None, Some(file)),
                             Err(err) => {
                                 eprintln!("failed to open {}: {}", spec.target, err);
